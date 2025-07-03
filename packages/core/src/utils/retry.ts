@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AuthType } from '../core/contentGenerator.js';
-
 export interface RetryOptions {
   maxAttempts: number;
   initialDelayMs: number;
@@ -63,70 +61,32 @@ export async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   options?: Partial<RetryOptions>,
 ): Promise<T> {
-  const {
-    maxAttempts,
-    initialDelayMs,
-    maxDelayMs,
-    onPersistent429,
-    authType,
-    shouldRetry,
-  } = {
+  const { maxAttempts, initialDelayMs, maxDelayMs, shouldRetry } = {
     ...DEFAULT_RETRY_OPTIONS,
     ...options,
   };
 
   let attempt = 0;
   let currentDelay = initialDelayMs;
-  let consecutive429Count = 0;
 
   while (attempt < maxAttempts) {
     attempt++;
     try {
       return await fn();
     } catch (error) {
-      const errorStatus = getErrorStatus(error);
-
-      // Track consecutive 429 errors
-      if (errorStatus === 429) {
-        consecutive429Count++;
-      } else {
-        consecutive429Count = 0;
-      }
-
-      // If we have persistent 429s and a fallback callback for OAuth
-      if (
-        consecutive429Count >= 2 &&
-        onPersistent429 &&
-        authType === AuthType.LOGIN_WITH_GOOGLE
-      ) {
-        try {
-          const fallbackModel = await onPersistent429(authType);
-          if (fallbackModel) {
-            // Reset attempt counter and try with new model
-            attempt = 0;
-            consecutive429Count = 0;
-            currentDelay = initialDelayMs;
-            // With the model updated, we continue to the next attempt
-            continue;
-          }
-        } catch (fallbackError) {
-          // If fallback fails, continue with original error
-          console.warn('Fallback to Flash model failed:', fallbackError);
-        }
-      }
-
       // Check if we've exhausted retries or shouldn't retry
       if (attempt >= maxAttempts || !shouldRetry(error as Error)) {
         throw error;
       }
 
-      const { delayDurationMs, errorStatus: delayErrorStatus } =
-        getDelayDurationAndStatus(error);
+      const { delayDurationMs, errorStatus } = getDelayDurationAndStatus(error);
 
       if (delayDurationMs > 0) {
         // Respect Retry-After header if present and parsed
         console.warn(
-          `Attempt ${attempt} failed with status ${delayErrorStatus ?? 'unknown'}. Retrying after explicit delay of ${delayDurationMs}ms...`,
+          `Attempt ${attempt} failed with status ${
+            errorStatus ?? 'unknown'
+          }. Retrying after explicit delay of ${delayDurationMs}ms...`,
           error,
         );
         await delay(delayDurationMs);
